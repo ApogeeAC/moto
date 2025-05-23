@@ -9,6 +9,7 @@ from moto.cloudfront.models import CloudFrontBackend, cloudfront_backends
 from moto.cloudwatch.models import CloudWatchBackend, cloudwatch_backends
 from moto.core.base_backend import BackendDict, BaseBackend
 from moto.core.exceptions import RESTError
+from moto.directconnect.models import DirectConnectBackend, directconnect_backends
 from moto.dms.models import DatabaseMigrationServiceBackend, dms_backends
 from moto.dynamodb.models import DynamoDBBackend, dynamodb_backends
 from moto.ec2 import ec2_backends
@@ -210,6 +211,10 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
     def cloudwatch_backend(self) -> CloudWatchBackend:
         return cloudwatch_backends[self.account_id][self.region_name]
 
+    @property
+    def directconnect_backend(self) -> DirectConnectBackend:
+        return directconnect_backends[self.account_id][self.region_name]
+
     def _get_resources_generator(
         self,
         tag_filters: Optional[List[Dict[str, Any]]] = None,
@@ -359,6 +364,7 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
                     continue
                 yield {"ResourceARN": f"{dist.arn}", "Tags": tags}
 
+        # Cloudwatch
         if self.cloudwatch_backend:
             cloudwatch_resource_map: Dict[str, Dict[str, Any]] = {
                 "cloudwatch:alarm": self.cloudwatch_backend.alarms,
@@ -383,6 +389,40 @@ class ResourceGroupsTaggingAPIBackend(BaseBackend):
                         tags = format_tags(cw_tags)
                         if not tags or not tag_filter(tags):
                             continue
+                        yield {
+                            "ResourceARN": arn,
+                            "Tags": tags,
+                        }
+
+        # DirectConnect
+        if self.directconnect_backend:
+            directconnect_resource_map: Dict[str, Dict[str, Any]] = {
+                "directconnect:dxcon": self.directconnect_backend.connections,
+                "directconnect:dxlag": self.directconnect_backend.lags,
+            }
+            import pdb
+            pdb.set_trace()
+            for resource_type, resource_source in directconnect_resource_map.items():
+                if (
+                    not resource_type_filters
+                    or "directconnect" in resource_type_filters
+                    or resource_type in resource_type_filters
+                ):
+                    for resource in resource_source.values():
+                        if resource_type == "directconnect:dxcon":
+                            end_of_arn = f"dxcon/{resource.name}"
+                        elif resource_type == "directconnect:dxlag":
+                            end_of_arn = f"dxlag/{resource.name}"
+                        else:
+                            continue  # Skip unknown types just in case
+
+                        arn = f"arn:{get_partition(self.region_name)}:directconnect:{self.region_name}:{self.account_id}:{end_of_arn}"
+                        dx_tags = self.directconnect_backend.list_tags_for_resource(arn)
+                        tags = format_tags(dx_tags)
+
+                        if not tags or not tag_filter(tags):
+                            continue
+
                         yield {
                             "ResourceARN": arn,
                             "Tags": tags,
